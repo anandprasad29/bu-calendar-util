@@ -20,10 +20,8 @@ try:
 except ImportError:
     flags = None
 
-#TODO Add notification support
-
-logging.basicConfig(filename='bu-calendar-util.log',
-                    format='%(asctime)s %(message)s',
+logging.basicConfig(filename='logs/bu-calendar-util.log',
+                    format='%(asctime)s %(filename)s %(funcName)s %(lineno)s %(message)s',
                     datefmt='%m/%d/%Y %I:%M:%S %p',
                     level=logging.INFO)
 
@@ -61,8 +59,6 @@ def get_credentials():
         logging.info('Storing credentials to ' + credential_path)
     return credentials
 
-"""Get Message with given ID.
-"""
 def get_message(service, user_id, msg_id):
   """Get a Message with given ID.
 
@@ -78,6 +74,21 @@ def get_message(service, user_id, msg_id):
   try:
     message = service.users().messages().get(userId=user_id, id=msg_id).execute()
     return message
+  except errors.HttpError, error:
+    logging.error('An error occurred: %s' % error)
+
+def addProcessedLabel(mail_service, msg_id):
+  """Add Processed Appt. label to the given Message.
+
+  Args:
+    service: Authorized Gmail API service instance.
+    msg_id: The id of the message required.
+  """
+  msg_labels = {'removeLabelIds': [], 'addLabelIds': ['Label_1']}
+
+  try:
+    mail_service.users().messages().modify(userId='me', id=msg_id,
+                                           body=msg_labels).execute()
   except errors.HttpError, error:
     logging.error('An error occurred: %s' % error)
 
@@ -122,6 +133,14 @@ def list_messages_matching_query(service, user_id, query=''):
     logging.error('An error occurred: %s' % error)
 
 def generate_start_end_time(text):
+    """Generate start, end time objects after parsing text.
+
+    Args:
+      text: Text to parse.
+
+    Returns:
+      Tuple of 2 datetime objects representing the startTime and endTime.
+    """
     regex = '(\d{2})/(\d{2})/(\d{4}).*(\d{2}):(\d{2})\s-\s(\d{2}):(\d{2})'
     match = re.search(regex, text, re.DOTALL)
     if match is not None:
@@ -137,6 +156,15 @@ def generate_start_end_time(text):
       return (startTime, endTime)
 
 def generate_per_line_start_end_time(body_text):
+  """Loop through each line of the text and extract datetime info.
+
+  Args:
+    text: Text to parse.
+
+  Returns:
+    List of tuples, each consisting of 2 datetime objects representing the
+    startTime and endTime.
+  """
   lines = body_text.split("\n")
   list_times = []
   for line in lines:
@@ -147,7 +175,6 @@ def generate_per_line_start_end_time(body_text):
 
 def generate_per_body_start_end_time(body_text):
   list_times = []
-  print("AAA %s", body_text)
   list_times.append(generate_start_end_time(body_text))
   return list_times
 
@@ -166,21 +193,19 @@ def create_event(body_text, summary, startTime, endTime):
   return event
 
 def add_event(cal_service, body_text, subject):
-  if "08/14/2017" not in body_text and "Perio Surgical Assist" not in body_text:
+#  if "08/14/2017" not in body_text and "Perio Surgical Assist" not in body_text:
 #  or "07/26/2017" not in body_text:
-    return
   list_times = []
   if "New Salud Alert" in subject:
     list_times = generate_per_line_start_end_time(body_text)
-    print(list_times)
-    if list_times is None:
-      logging.error("Failed to determine Regular Appointment info")
+    if not list_times:
+      logging.error("Failed to determine Regular Appointment info from " + body_text)
       return
     summary = 'Appointment'
   else:
     list_times = generate_per_body_start_end_time(body_text)
-    if list_times is None:
-      logging.error("Failed to determine custom Appointment info")
+    if not list_times:
+      logging.error("Failed to determine custom Appointment info from " + body_text)
       return
     summary = subject[:-7]+" Appointment"
 
@@ -226,16 +251,12 @@ def cancel_event(cal_service, body_text):
     for matched_event in matched_events:
       logging.info("Cancelling event with description: %s",
                    matched_event['description'])
-#      print(matched_event['start']['dateTime'])
-#      print(matched_event['end']['dateTime'])
       cal_service.events().delete(calendarId='primary', eventId=matched_event['id']).execute()
 
 
 def create_calendar_event(cal_service, subject, body_text):
   """ Extract Appointment information from message and update the calendar.
   """
-
-
   if "added" in body_text or "successful booking" in body_text:
       add_event(cal_service, body_text, subject)
   elif "cancelled" in body_text:
@@ -247,26 +268,21 @@ def main():
   mail_service = discovery.build('gmail', 'v1', http=http)
   cal_service = discovery.build('calendar', 'v3', http=http)
 
-  #query_str = 'from:jgt@bu.edu NOT label:Processed-Appt.'
-  query_str = 'from:jgt@bu.edu'
+  query_str = 'from:jgt@bu.edu NOT label:Processed-Appt.'
+#  query_str = 'from:jgt@bu.edu'
   message_ids = list_messages_matching_query(mail_service, 'me', query_str)
   messages = get_messages(mail_service, message_ids)
   messages.sort(key=lambda x: int(x['internalDate']))
 
-  count = 0
   for msg in messages:
-    count = count + 1
-    #msg = get_message(mail_service, 'me', msg_data['id'])
     headers = msg['payload']['headers']
     for header in headers:
       if ("Subject" in header["name"]):
         subject = header["value"]
-        #print(subject)
     body = base64.urlsafe_b64decode(msg['payload']['body']['data'].encode('utf-8'))
-    #if (count == 1):
     create_calendar_event(cal_service, subject, body)
+    addProcessedLabel(mail_service, msg['id'])
 
-      #Mark message as unread
 
 if __name__ == '__main__':
     main()

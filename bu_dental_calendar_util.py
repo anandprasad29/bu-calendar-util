@@ -20,7 +20,7 @@ try:
 except ImportError:
     flags = None
 
-logging.basicConfig(filename='logs/bu-calendar-util.log',
+logging.basicConfig(filename='/Users/anandprasad/Dropbox (Personal)/logs/bu-calendar-util.log',
                     format='%(asctime)s %(filename)s %(funcName)s %(lineno)s %(message)s',
                     datefmt='%m/%d/%Y %I:%M:%S %p',
                     level=logging.INFO)
@@ -192,9 +192,35 @@ def create_event(body_text, summary, startTime, endTime):
   }
   return event
 
+def insert_event_into_calendar(cal_service, body_text, summary,
+                               startTime, endTime):
+  event = create_event(body_text, summary, startTime, endTime)
+  gen_event = cal_service.events().insert(calendarId='primary', body=event).execute()
+  logging.info('Event created: %s' % (gen_event.get('htmlLink')))
+  logging.info('Event description: %s' % (body_text))
+
+def insert_unique_event_into_calendar(cal_service, body_text, summary,
+                                      list_times):
+  should_add = False
+  for (startTime, endTime) in list_times:
+    matched_events = list_matching_cal_events(cal_service, startTime, endTime)
+    if matched_events:
+      for matched_event in matched_events:
+        if "Appointment" in matched_event['summary']:
+          logging.info("Appointment matching this date and time already exists"
+                       ", ignoring this e-mail:%s", body_text)
+        else:
+          # The matched events don't have the same summary, so might be
+          # of a different type.
+          should_add = True
+    else:
+      # No matched events, add an appointment
+      should_add = True
+    if should_add:
+      insert_event_into_calendar(cal_service, body_text, "Appointment",
+                                 startTime, endTime)
+
 def add_event(cal_service, body_text, subject):
-#  if "08/14/2017" not in body_text and "Perio Surgical Assist" not in body_text:
-#  or "07/26/2017" not in body_text:
   list_times = []
   if "New Salud Alert" in subject:
     list_times = generate_per_line_start_end_time(body_text)
@@ -210,10 +236,8 @@ def add_event(cal_service, body_text, subject):
     summary = subject[:-7]+" Appointment"
 
   for (startTime, endTime) in list_times:
-    event = create_event(body_text, summary, startTime, endTime)
-    gen_event = cal_service.events().insert(calendarId='primary', body=event).execute()
-    logging.info('Event created: %s' % (gen_event.get('htmlLink')))
-    logging.info('Event description: %s' % (body_text))
+    insert_unique_event_into_calendar(cal_service, body_text, subject,
+                                      list_times)
 
 def list_matching_cal_events(cal_service, startTime, endTime):
   local_time = time.localtime()
@@ -240,6 +264,14 @@ def list_matching_cal_events(cal_service, startTime, endTime):
       break
   return matched_events
 
+def update_event(cal_service, body_text, subject):
+    list_times = generate_per_line_start_end_time(body_text)
+    if list_times is None:
+      logging.error("Failed to determine Appointment info")
+      return
+    insert_unique_event_into_calendar(cal_service, body_text, subject, list_times)
+
+
 def cancel_event(cal_service, body_text):
   list_times = generate_per_line_start_end_time(body_text)
   if list_times is None:
@@ -259,6 +291,8 @@ def create_calendar_event(cal_service, subject, body_text):
   """
   if "added" in body_text or "successful booking" in body_text:
       add_event(cal_service, body_text, subject)
+  if "updated" in body_text:
+      update_event(cal_service, body_text, subject)
   elif "cancelled" in body_text:
       cancel_event(cal_service, body_text)
 
@@ -269,7 +303,6 @@ def main():
   cal_service = discovery.build('calendar', 'v3', http=http)
 
   query_str = 'from:jgt@bu.edu NOT label:Processed-Appt.'
-#  query_str = 'from:jgt@bu.edu'
   message_ids = list_messages_matching_query(mail_service, 'me', query_str)
   messages = get_messages(mail_service, message_ids)
   messages.sort(key=lambda x: int(x['internalDate']))

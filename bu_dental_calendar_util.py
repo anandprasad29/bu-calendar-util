@@ -16,11 +16,15 @@ from apiclient import errors
 
 try:
     import argparse
-    flags = argparse.ArgumentParser(parents=[tools.argparser]).parse_args()
+    parser = argparse.ArgumentParser(parents=[tools.argparser])
+    parser.add_argument("username", help="Enter Username")
+    flags = parser.parse_args()
+
 except ImportError:
     flags = None
 
-logging.basicConfig(filename='/Users/anandprasad/Dropbox (Personal)/logs/bu-calendar-util.log',
+logging.basicConfig(filename='/Users/anandprasad/Dropbox '+
+                    '(Personal)/logs/' + flags.username + '/bu-calendar-util.log',
                     format='%(asctime)s %(filename)s %(funcName)s %(lineno)s %(message)s',
                     datefmt='%m/%d/%Y %I:%M:%S %p',
                     level=logging.INFO)
@@ -41,7 +45,7 @@ def get_credentials():
         Credentials, the obtained credential.
     """
     home_dir = os.path.expanduser('~')
-    credential_dir = os.path.join(home_dir, '.credentials')
+    credential_dir = os.path.join(home_dir, '.credentials/' + flags.username)
     if not os.path.exists(credential_dir):
         os.makedirs(credential_dir)
     credential_path = os.path.join(credential_dir,
